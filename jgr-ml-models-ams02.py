@@ -19,13 +19,6 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from datetime import datetime
 
-import torch
-import torch.nn as nn
-from torch.utils.data import DataLoader, TensorDataset
-from transformers import AutoTokenizer, AutoModel
-from sklearn.base import BaseEstimator, TransformerMixin
-from sklearn.linear_model import Ridge
-
 def create_output_directory():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_dir = os.path.join("outputs", timestamp)
@@ -49,99 +42,6 @@ def compute_correlations(data, feature_cols, bin_cols):
 
     correlation_df = pd.DataFrame(correlation_results, columns=['Bin Index', 'Bin Name', 'Feature Index', 'Feature Name', 'Correlation'])
     return correlation_df
-
-class TransformerRegressor(nn.Module):
-    def __init__(self, input_dim, num_heads=4, num_layers=2, hidden_dim=128):
-        super(TransformerRegressor, self).__init__()
-        self.transformer = nn.Transformer(
-            d_model=input_dim, 
-            nhead=num_heads, 
-            num_encoder_layers=num_layers,
-            dim_feedforward=hidden_dim
-        )
-        self.fc = nn.Linear(input_dim, 1)
-
-    def forward(self, x):
-        x = x.unsqueeze(1)  # Adding sequence length dimension (batch, seq_len, features)
-        out = self.transformer(x, x)  # Only using the encoder for simplicity
-        out = self.fc(out[:, -1, :])  # Regression output
-        return out.squeeze()
-
-def run_transformer_model(X_train, y_train, X_test, y_test):
-    # Convert data to tensors
-    X_train_tensor = torch.FloatTensor(X_train.values)
-    y_train_tensor = torch.FloatTensor(y_train.values)
-    X_test_tensor = torch.FloatTensor(X_test.values)
-    y_test_tensor = torch.FloatTensor(y_test.values)
-
-    train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-
-    # Initialize the model
-    input_dim = X_train.shape[1]
-    model = TransformerRegressor(input_dim)
-    criterion = nn.MSELoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
-
-    # Training loop
-    model.train()
-    for epoch in range(50):  # Number of epochs
-        for X_batch, y_batch in train_loader:
-            optimizer.zero_grad()
-            outputs = model(X_batch)
-            loss = criterion(outputs, y_batch)
-            loss.backward()
-            optimizer.step()
-
-    # Evaluation
-    model.eval()
-    with torch.no_grad():
-        y_pred = model(X_test_tensor).numpy()
-
-    r2 = r2_score(y_test, y_pred)
-    mse = mean_squared_error(y_test, y_pred)
-
-    y_test_np = np.array(y_test)
-    RSS = 0
-    etaRMS = 0
-    avg_y_test = 0
-    avg_y_test_n = 0
-
-    for ij in range(len(y_test_np)):
-        tem = ((y_test_np[ij] - y_pred[ij]) * (y_test_np[ij] - y_pred[ij]))
-        RSS = RSS + tem
-        etaRMS = etaRMS + (tem / (y_test_np[ij] * y_test_np[ij]))
-        avg_y_test = avg_y_test + y_test_np[ij]
-        avg_y_test_n = avg_y_test_n + 1
-
-    etaRMS = etaRMS / avg_y_test_n
-    etaRMS = 100. * math.sqrt(etaRMS)
-
-    print(f"Transformer R² Score on Test Data: {r2:.4f}, RMSE: {np.sqrt(mse):.4f}, etaRMS: {etaRMS:.4f}")
-    
-    return r2, mse, etaRMS, y_pred, {}, None, None
-
-
-# Custom Transformer to Extract Embeddings from a Transformer Model
-class TransformerEmbeddingExtractor(BaseEstimator, TransformerMixin):
-    def __init__(self, model_name='bert-base-uncased', max_length=32):
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name)
-        self.max_length = max_length
-
-    def fit(self, X, y=None):
-        return self
-
-    def transform(self, X):
-        # Convert numerical data to string representations
-        text_data = [" ".join(map(str, row)) for row in X]
-        # Tokenize the text data
-        inputs = self.tokenizer(text_data, padding=True, truncation=True, max_length=self.max_length, return_tensors='pt')
-        with torch.no_grad():
-            outputs = self.model(**inputs)
-        # Use the [CLS] token representation (or mean of all tokens)
-        cls_embeddings = outputs.last_hidden_state[:, 0, :].numpy()  # (batch_size, hidden_size)
-        return cls_embeddings
 
 def run_model_with_grid_search(model_type, X_train, y_train, X_test, y_test):
     if model_type == 'xgboost':
@@ -181,14 +81,6 @@ def run_model_with_grid_search(model_type, X_train, y_train, X_test, y_test):
             'regressor__learning_rate': ['constant', 'optimal', 'adaptive']
         }
         model = pipeline
-    elif model_type == 'transformer':
-        # r2, mse, y_pred, best_params, mean_train_score, param_grid = run_transformer_model(X_train, y_train, X_test, y_test)
-        pipeline = Pipeline([
-            ('transformer', TransformerEmbeddingExtractor()),  # Use Transformer to extract embeddings
-            ('regressor', Ridge(alpha=1.0))
-        ])
-        param_grid = None
-        model = pipeline
     else:
         raise ValueError(f"Model type {model_type} is not supported.")
 
@@ -202,7 +94,6 @@ def run_model_with_grid_search(model_type, X_train, y_train, X_test, y_test):
         mean_train_score = np.mean(grid_search.cv_results_['mean_train_score'])
         print(f"R² Score on Train Data: {mean_train_score:.4f}")
     else: 
-        print('aaaa')
         print(f"Shape of X_train: {X_train.shape}")
         print(f"Shape of y_train: {y_train.shape}")
 
