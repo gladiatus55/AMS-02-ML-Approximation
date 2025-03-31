@@ -4,6 +4,7 @@
 # from sklearn.pipeline import make_pipeline
 import math
 
+import argparse
 import os
 import time
 import pandas as pd
@@ -18,6 +19,23 @@ from sklearn.model_selection import GridSearchCV
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from datetime import datetime
+
+def parse_arguments():
+    parser = argparse.ArgumentParser(description='ML models for AMS-02 data approximation')
+    parser.add_argument('--models', nargs='+', choices=['xgboost', 'linear', 'random_forest', 'svr', 'sgdr', 'all'],
+                      default=['all'], help='Specify models to run (default: all)')
+    parser.add_argument('--train', type=str, default="train.csv", 
+                      help='Path to training data CSV file (default: train.csv)')
+    parser.add_argument('--test_x', type=str, default="X_test.csv", 
+                      help='Path to X test data CSV file (default: X_test.csv)')
+    parser.add_argument('--test_y', type=str, default="y_test.csv", 
+                      help='Path to y test data CSV file (default: y_test.csv)')
+    parser.add_argument('--top_n', type=int, default=0, 
+                      help='Use top N correlated features (default: 0, disabled)')
+    parser.add_argument('--specific_features', nargs='+', 
+                      help='Use specific features (default: None)')
+    return parser.parse_args()
+
 
 def create_output_directory():
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -149,20 +167,38 @@ def plot_r2_scores(r2_scores, bin_cols, model_type, model_dir):
     plt.savefig(plot_path)
 
 def main():
-    use_top_n_features = False
-    top_n_features_count = 1
+    args = parse_arguments()
 
-    use_specific_features = False
-    specific_features = ['Phi']
+    if 'all' in args.models:
+        model_types = ['xgboost', 'linear', 'random_forest', 'svr', 'sgdr']
+    else:
+        model_types = args.models
+
+    use_top_n_features = args.top_n > 0
+    top_n_features_count = args.top_n
+
+    use_specific_features = args.specific_features is not None
+    specific_features = args.specific_features if use_specific_features else ['NM_Oulu']
 
     # Create output directory
     output_dir = create_output_directory()
 
+    # Print execution configuration
+    print(f"Running with configuration:")
+    print(f"  Models: {model_types}")
+    print(f"  Training data: {args.train}")
+    print(f"  Test data X: {args.test_x}, Y: {args.test_y}")
+    if use_top_n_features:
+        print(f"  Using top {top_n_features_count} features")
+    if use_specific_features:
+        print(f"  Using specific features: {specific_features}")
+    print("--------------------------------------------------")
+
     # Load the training data
-    train_data = pd.read_csv("train.csv")
+    train_data = pd.read_csv(args.train)
     
     # Load the test data and timestamp
-    X_test_full = pd.read_csv("X_test.csv")
+    X_test_full = pd.read_csv(args.test_x)
     timeStamp = X_test_full['timeStamp'].copy()
 
     # Feature and bin columns
@@ -175,8 +211,6 @@ def main():
     # Save correlation results
     correlation_path = os.path.join(output_dir, "correlation_results.csv")
     correlation_df.to_csv(correlation_path, index=False)
-
-    model_types = ['xgboost', 'linear','random_forest', 'svr', 'sgdr', 'transformer']	
     
     for model_type in model_types:
         model_dir = create_model_subdirectory(output_dir, model_type)
@@ -216,7 +250,7 @@ def main():
                 y_train = train_data[bin_name]
 
                 X_test = X_test_full[selected_features]
-                y_test = pd.read_csv("y_test.csv")[bin_name]
+                y_test = pd.read_csv(args.test_y)[bin_name]
 
                 r2, mse, etaRMS, y_pred, best_params, mean_train_score, param_grid = run_model_with_grid_search(model_type, X_train, y_train, X_test, y_test)
                 
